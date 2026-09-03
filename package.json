@@ -1,6 +1,6 @@
 {
   "name": "@maofuxing/astro-visual-editor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Development-only Astro source markers and bootstrap for the Maofuxing DSH visual editor",
   "license": "MIT",
   "repository": {
