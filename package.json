@@ -1,0 +1,57 @@
+{
+  "name": "@maofuxing/astro-visual-editor",
+  "version": "0.1.0",
+  "description": "Development-only Astro source markers and bootstrap for the Maofuxing DSH visual editor",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CJLLL/astro-visual-editor.git"
+  },
+  "homepage": "https://github.com/CJLLL/astro-visual-editor#readme",
+  "bugs": {
+    "url": "https://github.com/CJLLL/astro-visual-editor/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsdown && tsc -p tsconfig.json --emitDeclarationOnly",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+    "test": "vitest run --pool=forks --maxWorkers=1 --no-file-parallelism",
+    "check": "yarn run build && yarn run typecheck && yarn run test",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "astro": ">=7.0.0 <8"
+  },
+  "dependencies": {
+    "@astrojs/compiler": "^4.0.0",
+    "magic-string": "^0.30.21"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "astro": "^7.2.0",
+    "tsdown": "0.22.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
