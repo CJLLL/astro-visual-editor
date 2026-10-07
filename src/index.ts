@@ -8,6 +8,7 @@
 
 import { parse as parseAstro } from '@astrojs/compiler'
 import MagicString from 'magic-string'
+import { createHash } from 'node:crypto'
 import { basename, relative, resolve } from 'node:path'
 
 export const DEFAULT_DSH_HOST = 'http://127.0.0.1:43120'
@@ -51,9 +52,29 @@ interface VitePluginLike {
     order: 'pre' | 'post'
     handler: ViteTransformHandler
   }
+  hotUpdate?: {
+    order: 'pre' | 'post'
+    handler: ViteHotUpdateHandler
+  }
 }
 
 type ViteTransformHandler = (code: string, id: string) => { code: string; map?: unknown } | null | Promise<{ code: string; map?: unknown } | null>
+
+/** Public Vite environment APIs used to compile before HMR notifications. */
+interface ViteEnvironmentLike {
+  config: { consumer: 'client' | 'server' }
+  moduleGraph: { getModuleById(id: string): { url: string } | undefined }
+  transformRequest(url: string): Promise<unknown>
+}
+
+type ViteHotUpdateHandler = (
+  this: { environment: Pick<ViteEnvironmentLike, 'config'> },
+  options: {
+    type: 'create' | 'update' | 'delete'
+    file: string
+    server: { environments: Record<string, ViteEnvironmentLike> }
+  },
+) => Promise<void>
 
 export interface AstroVisualEditorIntegration {
   name: string
@@ -95,7 +116,7 @@ function byteOffsetsToUtf16Indexes(code: string, offsets: readonly number[]): Ma
   return indexes
 }
 
-function collectElementAnnotations(node: AstroNode, sourceFile: string, edits: ElementEdit[]): void {
+function collectElementAnnotations(node: AstroNode, sourceFile: string, edits: ElementEdit[], revision?: string): void {
   const isLiteralElement = node.type === 'element' || node.type === 'custom-element'
   const hasAnnotation = node.attributes?.some(attribute => attribute.name === 'data-dsh-source-file') ?? false
   const start = node.position?.start
@@ -103,10 +124,10 @@ function collectElementAnnotations(node: AstroNode, sourceFile: string, edits: E
     && !hasAnnotation && start?.offset !== undefined && start.line !== undefined) {
     edits.push({
       offset: start.offset + Buffer.byteLength(`<${node.name}`, 'utf8'),
-      attributes: ` data-dsh-source-file="${escapeAttribute(sourceFile)}" data-dsh-source-loc="${start.line}:${start.column ?? 0}"`,
+      attributes: ` data-dsh-source-file="${escapeAttribute(sourceFile)}" data-dsh-source-loc="${start.line}:${start.column ?? 0}"${revision === undefined ? '' : ` data-dsh-source-hash="${revision}"`}`,
     })
   }
-  for (const child of node.children ?? []) collectElementAnnotations(child, sourceFile, edits)
+  for (const child of node.children ?? []) collectElementAnnotations(child, sourceFile, edits, revision)
 }
 
 function isPrimaryAstroRequest(id: string): boolean {
@@ -131,6 +152,24 @@ function dshSourceAnnotationsPlugin(projectRoot: string): VitePluginLike {
     name: 'dsh:astro-source-annotations',
     enforce: 'pre',
     apply: 'serve',
+    hotUpdate: {
+      order: 'pre',
+      async handler({ type, file, server }) {
+        if (type !== 'update' || !isPrimaryAstroRequest(file) || this.environment.config.consumer !== 'client') return
+        // Astro compares its annotated compile input with raw ctx.read() and
+        // misses the CSS-only fast path. Its virtual CSS modules can then load
+        // the previous compile metadata before a page reload compiles the file.
+        // Vite has already invalidated the changed module: compile it now, in
+        // server environments, before Astro/Vite notify the browser. This also
+        // refreshes source locations when an edit inserts/removes lines. Run
+        // from the client hook so compile failures reach its error overlay.
+        for (const environment of Object.values(server.environments)) {
+          if (environment.config.consumer !== 'server') continue
+          const module = environment.moduleGraph.getModuleById(file)
+          if (module !== undefined) await environment.transformRequest(module.url)
+        }
+      },
+    },
     transform: {
       order: 'pre',
       async handler(code, id) {
@@ -138,7 +177,7 @@ function dshSourceAnnotationsPlugin(projectRoot: string): VitePluginLike {
         const { ast } = await parseAstro(code, { position: true })
         const sourceFile = toProjectRelative(projectRoot, id)
         const edits: ElementEdit[] = []
-        collectElementAnnotations(ast as unknown as AstroNode, sourceFile, edits)
+        collectElementAnnotations(ast as unknown as AstroNode, sourceFile, edits, createHash('sha256').update(code).digest('hex'))
         if (edits.length === 0) return null
         const output = new MagicString(code)
         const indexes = byteOffsetsToUtf16Indexes(code, edits.map(edit => edit.offset))
